@@ -751,6 +751,27 @@ server <- function(input, output, session) {
       return(d)
     })
   })
+
+  venn_diagram <- eventReactive(input$venn_run, {
+    if(length(input$venn_choices) + as.numeric(input$venn_enable_upload == "Enable") > 4 | length(input$venn_choices) + as.numeric(input$venn_enable_upload == "Enable") < 2){
+      showModal(venn_failedModal())
+      return()
+    }
+    if(length(input$venn_choices) == 2) {
+      p <- ggvenn(venn_diagram_table(), c(input$venn_choices[1], input$venn_choices[2]), show_percentage=FALSE, stroke_size=0.5, set_name_size=3)
+    }
+    else if(length(input$venn_choices) == 3) {
+      p <- ggvenn(venn_diagram_table(), c(input$venn_choices[1], input$venn_choices[2], input$venn_choices[3]), show_percentage=FALSE, stroke_size=0.5, set_name_size=3)
+    }
+    else if(length(input$venn_choices) == 4) {
+      p <- ggvenn(venn_diagram_table(), c(input$venn_choices[1], input$venn_choices[2], input$venn_choices[3], input$venn_choices[4]), show_percentage=FALSE, stroke_size=0.5, set_name_size=3)
+    }
+    return(p)
+  })
+  
+  output$venndiagram <- renderPlot({
+    return(venn_diagram())
+  })
   
   #################### PRINCIPAL COMPONENTS ANALYSIS ####################
   observeEvent(input$submit, {
@@ -838,6 +859,10 @@ server <- function(input, output, session) {
     
     return(p)
   })
+
+  output$pca <- renderPlot({
+      return(pca())
+  }
   
   ########################### VOLCANO PLOT ############################
   # dataframe of all replicates in group 1
@@ -928,7 +953,59 @@ server <- function(input, output, session) {
     
     return(tt_log)
   })
-  
+
+  # combines p-value and log2fc into one dataframe
+  df_tt <- eventReactive(input$volcano_run, {
+    df_tt <- base::cbind(dfres(), Log2FC(), df_pval())
+    df_tt_test <- df_tt[order(df_tt$Pval),]
+    return(df_tt)
+  })
+
+  # combines p-value, log2fc, and significance (i.e., labeled or not?) into one dataframe
+  df_sig <- reactive({
+    if(input$volcano_select_proteins == "Significant"){
+      fc <- df_tt()[,(base::ncol(df_tt())-2)]
+      logpval <- df_pval()[,2]
+      bind <- cbind(logpval, fc)
+      sig <- bind[,1] >= -1*log10(input$sig_cutoff) & abs(bind[,2]) > log2(input$fc_cutoff)
+    }
+    else if(input$volcano_select_proteins == "All"){
+      sig <- rep(TRUE, nrow(df_tt()))
+    }
+    else if(input$volcano_select_proteins == "Upload"){
+      if(input$volcano_file_keytype == "UNIPROT"){
+        protein <- dfprots()[,1]
+      }
+      else if(input$volcano_file_keytype == "SYMBOL"){
+        protein <- dfprots()[,2]
+      }
+      else if(input$volcano_file_keytype == "ENTREZID"){
+        protein <- dfprots()[,3]
+      }
+      sig <- protein %in% volcano_listupload()
+    }
+    
+    df_sig <- cbind(df_tt(), sig)
+    
+    return(df_sig)
+  })
+
+  # plot volcano
+  volcano <- eventReactive(input$volcano_run, {
+    df_volcano <- df_sig()
+    
+    g1 <- base::paste(input$groups1, collapse='/')
+    g2 <- base::paste(input$groups2, collapse='/')
+    title <- base::paste(g1, "vs", g2, sep=' ')
+    p <- ggplot(df_volcano) +
+      geom_point(mapping=aes(x=Log2FC(),y=LogPval,col=sig), show.legend=FALSE)+labs(x = "Log2(Fold Change)", y = "-Log(P-adj)")+ggtitle(title)+
+      theme(plot.title = element_text(hjust = 0.5), axis.line = element_line(colour = "black"), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(fill = 'white'))
+    return(p)
+  })
+
+  output$volcano <- renderPlot({
+    return(volcano())
+  })
   
   ########################## GENE ONTOLOGY ############################
   # use list = volcano
